@@ -11,6 +11,7 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [downloadUrl, setDownloadUrl] = useState(null)
   const [ocrResults, setOcrResults] = useState(null)
+  const [language, setLanguage] = useState('eng')
 
   const handlePdfChange = async (e) => {
     const file = e.target.files[0]
@@ -19,7 +20,6 @@ function App() {
       setDownloadUrl(null)
       setStatus('Analyzing PDF form fields...')
 
-      // Get PDF fields
       const formData = new FormData()
       formData.append('pdf_file', file)
 
@@ -56,68 +56,48 @@ function App() {
     }
 
     setLoading(true)
-    setStatus('Processing... Extracting text from images...')
+    setStatus('Processing... Smart matching fields...')
     setDownloadUrl(null)
 
     try {
-      // Step 1: OCR the images
+      // Use the smart auto-fill endpoint
+      const formData = new FormData()
+      formData.append('pdf_file', pdfFile)
+      images.forEach(img => formData.append('images', img))
+      formData.append('language', language)
+
+      const response = await fetch(`${API_URL}/api/auto-fill`, {
+        method: 'POST',
+        body: formData
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || 'Auto-fill failed')
+      }
+
+      const fieldsFilled = response.headers.get('X-Fields-Filled') || '?'
+      const totalFields = response.headers.get('X-Total-Fields') || '?'
+
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      setDownloadUrl(url)
+      setStatus(`PDF filled successfully! ${fieldsFilled}/${totalFields} fields filled.`)
+
+      // Also get OCR results for display
       const ocrFormData = new FormData()
       images.forEach(img => ocrFormData.append('images', img))
+      ocrFormData.append('language', language)
 
       const ocrResponse = await fetch(`${API_URL}/api/ocr/extract-parsed`, {
         method: 'POST',
         body: ocrFormData
       })
 
-      if (!ocrResponse.ok) {
-        throw new Error('OCR failed: ' + (await ocrResponse.json()).detail)
+      if (ocrResponse.ok) {
+        const ocrData = await ocrResponse.json()
+        setOcrResults(ocrData)
       }
-
-      const ocrData = await ocrResponse.json()
-      setOcrResults(ocrData)
-      setStatus('OCR complete. Filling PDF...')
-
-      // Step 2: Build field mapping (map PDF fields to parsed data)
-      const fieldMapping = {}
-      const parsed = ocrData.parsed_data
-
-      pdfFields.forEach((field, index) => {
-        const fieldName = field.name.toLowerCase()
-
-        if (fieldName.includes('name') && parsed.names.length > 0) {
-          fieldMapping[field.name] = 'names[0]'
-        } else if ((fieldName.includes('date') || fieldName.includes('dob') || fieldName.includes('birth')) && parsed.dates.length > 0) {
-          fieldMapping[field.name] = 'dates[0]'
-        } else if ((fieldName.includes('id') || fieldName.includes('number') || fieldName.includes('passport') || fieldName.includes('nid')) && parsed.id_numbers.length > 0) {
-          fieldMapping[field.name] = 'id_numbers[0]'
-        } else if (fieldName.includes('email') && parsed.emails.length > 0) {
-          fieldMapping[field.name] = 'emails[0]'
-        } else if ((fieldName.includes('phone') || fieldName.includes('mobile') || fieldName.includes('tel')) && parsed.phone_numbers.length > 0) {
-          fieldMapping[field.name] = 'phone_numbers[0]'
-        } else if (fieldName.includes('address') && parsed.addresses.length > 0) {
-          fieldMapping[field.name] = 'addresses[0]'
-        }
-      })
-
-      // Step 3: Fill the PDF using /api/process
-      const processFormData = new FormData()
-      processFormData.append('pdf_file', pdfFile)
-      images.forEach(img => processFormData.append('images', img))
-      processFormData.append('field_mapping', JSON.stringify(fieldMapping))
-
-      const fillResponse = await fetch(`${API_URL}/api/process`, {
-        method: 'POST',
-        body: processFormData
-      })
-
-      if (!fillResponse.ok) {
-        throw new Error('PDF fill failed: ' + (await fillResponse.json()).detail)
-      }
-
-      const blob = await fillResponse.blob()
-      const url = URL.createObjectURL(blob)
-      setDownloadUrl(url)
-      setStatus('PDF filled successfully! Click download to get your file.')
 
     } catch (error) {
       setStatus('Error: ' + error.message)
@@ -145,6 +125,21 @@ function App() {
       </header>
 
       <main>
+        <div className="settings-section">
+          <div className="setting">
+            <label htmlFor="language">OCR Language:</label>
+            <select
+              id="language"
+              value={language}
+              onChange={(e) => setLanguage(e.target.value)}
+            >
+              <option value="eng">English</option>
+              <option value="ita">Italian</option>
+              <option value="eng+ita">English + Italian</option>
+            </select>
+          </div>
+        </div>
+
         <div className="upload-section">
           <div className="upload-box">
             <h2>1. Upload PDF Form</h2>
@@ -244,7 +239,7 @@ function App() {
       </main>
 
       <footer>
-        <p>PDF Automation API</p>
+        <p>PDF Automation API - Smart Pattern Matching</p>
       </footer>
     </div>
   )
